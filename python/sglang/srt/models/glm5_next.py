@@ -26,7 +26,7 @@ from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
 from sglang.srt.layers.attention import vision_utils
 from sglang.srt.layers.attention.vision import VisionAttention
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStateList
-from sglang.srt.layers.communicator import (
+from sglang.srt.layers.layer_boundary import (
     PLAIN_RESIDUAL,
     MHCState,
     declare_attn,
@@ -35,8 +35,8 @@ from sglang.srt.layers.communicator import (
     get_attn_tp_context,
     make_stages,
 )
-from sglang.srt.layers.communicator.residual import access as residual_access
-from sglang.srt.layers.communicator.residual import batch as residual_batch
+from sglang.srt.layers.layer_boundary.residual import access as residual_access
+from sglang.srt.layers.layer_boundary.residual import batch as residual_batch
 from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.layers.linear import (
     ColumnParallelBatchedLinear,
@@ -793,7 +793,7 @@ class Glm5NextDecoderLayer(nn.Module):
                 ),
                 is_last_layer=terminal,
             ).layer_residual()
-        self.attn_stage, self.ffn_stage = make_stages(
+        self.attn_boundary, self.ffn_boundary = make_stages(
             (
                 declare_attn(
                     read=residual.attention_read, update=residual.attention_update
@@ -931,7 +931,7 @@ class Glm5NextDecoderLayer(nn.Module):
     ):
         hidden_states_orig = residual_access.buffer(hidden_states)
 
-        hidden_states = self.attn_stage.prepare(
+        hidden_states = self.attn_boundary.prepare(
             hidden_states, forward_batch, capture_output=capture_output
         )
 
@@ -940,7 +940,9 @@ class Glm5NextDecoderLayer(nn.Module):
             hidden_states=hidden_states,
             forward_batch=forward_batch,
             zero_allocator=zero_allocator,
-            input_on_attention_tp_slices=(self.attn_stage.input_on_attention_tp_slices),
+            input_on_attention_tp_slices=(
+                self.attn_boundary.input_on_attention_tp_slices
+            ),
             prev_topk_indices=prev_topk_indices,
         )
         if isinstance(hidden_states, tuple):
@@ -949,8 +951,8 @@ class Glm5NextDecoderLayer(nn.Module):
             topk_indices = None
         get_attn_tp_context().clear_attn_inputs()
 
-        hidden_states = self.attn_stage.finish(hidden_states, forward_batch)
-        hidden_states = self.ffn_stage.prepare(hidden_states, forward_batch)
+        hidden_states = self.attn_boundary.finish(hidden_states, forward_batch)
+        hidden_states = self.ffn_boundary.prepare(hidden_states, forward_batch)
 
         if isinstance(self.mlp, Glm5NextMLP):
             gemm_output_zero_allocator = None
@@ -966,7 +968,7 @@ class Glm5NextDecoderLayer(nn.Module):
         else:
             _mlp_ctx = nullcontext()
 
-        with self.ffn_stage.exit(forward_batch) as ffn_exit, _mlp_ctx:
+        with self.ffn_boundary.exit(forward_batch) as ffn_exit, _mlp_ctx:
             hidden_states = self.mlp(
                 hidden_states,
                 forward_batch,
@@ -1107,7 +1109,7 @@ class Glm5NextModel(nn.Module):
             residual_batch.start(forward_batch)
         else:
             assert pp_proxy_tensors is not None
-            hidden_states = self.layers[self.start_layer].attn_stage.from_pp(
+            hidden_states = self.layers[self.start_layer].attn_boundary.from_pp(
                 pp_proxy_tensors, forward_batch
             )
         device = hidden_states.device
