@@ -1,3 +1,5 @@
+from sglang.srt.layers.communicator.residual.add_norm import ADD
+
 """Deepstack visual embeddings are added to a decoder layer's output. When the
 layer left its FFN all-reduce to the next layer, that output is one rank's
 partial sum, and an embedding added to it is counted once per rank."""
@@ -43,15 +45,16 @@ class DeferringLayer(nn.Module):
     def forward(
         self, positions=None, hidden_states=None, forward_batch=None, residual=None, **_
     ):
-        if isinstance(hidden_states, UnreducedOutput):
-            hidden_states = all_reduce(hidden_states.partial)
+        stream = forward_batch.residual_stream
+        hidden_states, residual = stream.finish(hidden_states)
         residual = hidden_states if residual is None else hidden_states + residual
-        if self.is_last_layer:
-            return torch.ones_like(residual), residual
-        return (
-            UnreducedOutput(torch.full_like(residual, 1 / TP_SIZE), group=GROUP),
-            residual,
+        stream.write(residual)
+        output = (
+            torch.ones_like(residual)
+            if self.is_last_layer
+            else UnreducedOutput(torch.full_like(residual, 1 / TP_SIZE), group=GROUP)
         )
+        return stream.leave(output, ADD), stream
 
 
 class SumNorm(nn.Module):
@@ -112,7 +115,7 @@ class TestDeepstackOnDeferredReduction(CustomTestCase):
         return model.forward(
             input_ids=None,
             positions=None,
-            forward_batch=None,
+            forward_batch=SimpleNamespace(),
             input_embeds=self.embeds.clone(),
             input_deepstack_embeds=deepstack,
         )
@@ -175,7 +178,7 @@ class TestSplitPrefillCompletion(CustomTestCase):
                         input_embeds=torch.zeros(tokens, HIDDEN),
                     )
                     self.assertIsNone(first)
-                    self.assertIsInstance(batch.hidden_states, UnreducedOutput)
+                    self.assertIsNotNone(batch.residual_stream.pending.owed)
                     result = model_cls.forward_split_prefill(
                         wrapper, None, None, batch, (2, NUM_LAYERS)
                     )

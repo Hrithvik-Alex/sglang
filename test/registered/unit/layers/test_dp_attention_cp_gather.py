@@ -1,3 +1,5 @@
+from sglang.srt.layers.communicator.residual.stream import ResidualStream
+
 """The dense-FFN gather and take-back under attention DP x CP x TP, rank by rank.
 
 Every rank builds its layer's communicator and runs its prepare_mlp and
@@ -123,6 +125,13 @@ def cp_replicated(forward_mode, rows, seed):
     group.values *= CP_SIZE
     group.residuals *= CP_SIZE
     return group
+
+
+def prepare_mlp(communicator, hidden, residual, forward_batch):
+    forward_batch.residual_stream = ResidualStream(residual)
+    return communicator.prepare_mlp(
+        hidden, forward_batch.residual_stream, forward_batch
+    )
 
 
 class TestDpCpGather(CustomTestCase):
@@ -278,8 +287,8 @@ class TestDpCpGather(CustomTestCase):
                     steps = r.communicator._batch_steps(r.forward_batch)
                     self.assertIs(steps.ffn.prepare.keywords["step"].func, ffn_input)
                 hidden_states, residual = rank_inputs(*rank)
-                return r.communicator.prepare_mlp(
-                    hidden_states, residual, r.forward_batch
+                return prepare_mlp(
+                    r.communicator, hidden_states, residual, r.forward_batch
                 )
 
         # The all-reduce is a sum over every rank: record what each rank hands
@@ -317,8 +326,9 @@ class TestDpCpGather(CustomTestCase):
             tokens = own.shape[0]
             hidden_states, residual = gather(rank, lambda x: summed.clone())
             torch.testing.assert_close(hidden_states, expected, rtol=0, atol=0)
-            torch.testing.assert_close(residual[:tokens], own, rtol=0, atol=0)
+            torch.testing.assert_close(residual.residual[:tokens], own, rtol=0, atol=0)
             with as_rank(*rank, None) as r:
+                r.forward_batch.residual_stream = residual
                 back, _ = r.communicator.postprocess_layer(
                     3 * hidden_states, residual, r.forward_batch
                 )
