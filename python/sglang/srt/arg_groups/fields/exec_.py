@@ -627,7 +627,7 @@ class ExecComm(msgspec.Struct):
             "redistribution; rs and rsv permit fixed-size and variable-size "
             "reduce-scatter respectively; rs+rsv permits both (RSv first). "
             "Unsupported paths fall back to ar. auto resolves the model default "
-            "for FFN layers using stage boundaries. Required attention and MoE collectives and "
+            "for all FFN layers. Required attention and MoE collectives and "
             "all-reduce fusion are unaffected.",
             resolvable=True,
         ),
