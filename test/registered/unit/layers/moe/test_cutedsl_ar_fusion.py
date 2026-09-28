@@ -57,7 +57,6 @@ def _communicator():
     comm.enable_fused_ar_quant = False
     comm._attn_input_fusions = comm._select_attn_input_fusions()
     # Only the ordinary batches' attention input half, with these entries.
-    comm._context = SimpleNamespace()
     comm._sp_steps = comm._input_scattered_steps = comm._cp_steps = None
     comm._steps = SimpleNamespace(
         attention=SimpleNamespace(
@@ -170,7 +169,6 @@ def test_cutedsl_entries_come_before_the_base_fused_kernel():
         assert fusions[1].run == base
         # The workspace reduces over the TP group, which is the attention-TP group here.
         assert [f.completes for f in fusions] == [SumGroup.ATTN_TP] * 2
-        assert all(f.may_return_new_residual for f in fusions)
         # A residual on each rank's slice is gathered first, which the
         # workspace does not do.
         comm._declared = SimpleNamespace(
@@ -549,7 +547,7 @@ class TestDeferredLoraAllReduce(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
 
-        from sglang.srt.layers.communicator import layer as exits
+        from sglang.srt.layers.communicator import exit as exits
         from sglang.srt.layers.communicator.fusions.cutedsl import CuteDSLFusion
 
         group = object()

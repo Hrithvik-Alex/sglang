@@ -243,7 +243,6 @@ class CuteDSLFusion:
                         self._mlp_input_reduce_output_and_update_and_read_residual,
                         layer,
                     ),
-                    may_return_new_residual=True,
                 ),
             )
         return ()
